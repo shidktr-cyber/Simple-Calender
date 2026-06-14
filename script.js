@@ -1,283 +1,269 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const calendarGrid = document.getElementById('calendarGrid');
-    const currentMonthYear = document.getElementById('currentMonthYear');
-    const prevMonthBtn = document.getElementById('prevMonth');
-    const nextMonthBtn = document.getElementById('nextMonth');
+    // --- Elements ---
+    const calendarContainer = document.getElementById('calendar-container');
+    const monthYearDisplay = document.getElementById('month-year-display');
+    const prevMonthBtn = document.getElementById('prev-month');
+    const nextMonthBtn = document.getElementById('next-month');
+    const eventListEl = document.getElementById('event-list');
     
-    const popover = document.getElementById('quickAddPopover');
-    const eventTitleInput = document.getElementById('eventTitleInput');
-    
-    const modal = document.getElementById('detailsModal');
-    const closeModalBtn = document.getElementById('closeModal');
-    const modalDateTitle = document.getElementById('modalDateTitle');
-    const modalEventsList = document.getElementById('modalEventsList');
-    const modalAddInput = document.getElementById('modalAddInput');
+    // Input Panel Elements
+    const inputPanel = document.getElementById('input-panel');
+    const selectedDatesText = document.getElementById('selected-dates-text');
+    const cancelSelectionBtn = document.getElementById('cancel-selection');
+    const eventInput = document.getElementById('event-input');
+    const addEventBtn = document.getElementById('add-event-btn');
 
+    // --- State ---
     let currentDate = new Date();
-    let events = JSON.parse(localStorage.getItem('calendar_events')) || {};
-    
-    // Selection state
-    let selectedDates = new Set(); // Setを使って一意な日付を管理
+    let selectedDates = new Set(); // Stores date strings like "2023-10-05"
+    let events = []; // Array of { id: string, date: string, text: string }
+    let holidays = {}; // key: "YYYY-MM-DD", value: "Holiday Name"
 
-    // --- Init ---
-    renderCalendar();
+    // --- Localization ---
+    const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
 
-    // --- Calendar Rendering ---
+    // --- Initialization ---
+    async function init() {
+        loadEvents();
+        await fetchHolidays();
+        renderCalendar();
+        renderEvents();
+        setupEventListeners();
+    }
+
+    // --- Storage & API ---
+    function loadEvents() {
+        const stored = localStorage.getItem('simpleCalendarEvents');
+        if (stored) {
+            try {
+                events = JSON.parse(stored);
+            } catch (e) {
+                console.error("Failed to parse events from local storage", e);
+                events = [];
+            }
+        }
+    }
+
+    function saveEvents() {
+        localStorage.setItem('simpleCalendarEvents', JSON.stringify(events));
+    }
+
+    async function fetchHolidays() {
+        try {
+            // 内閣府のデータをもとにした祝日APIを利用
+            const response = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+            if (response.ok) {
+                holidays = await response.json();
+            }
+        } catch (e) {
+            console.error("Failed to fetch holidays", e);
+        }
+    }
+
+    // --- Helpers ---
+    function formatDateString(date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+
+    function getFormattedDateDisplay(dateStr) {
+        const d = new Date(dateStr);
+        return `${d.getMonth() + 1}月${d.getDate()}日(${dayNames[d.getDay()]})`;
+    }
+
+    function getEventsForDate(dateStr) {
+        return events.filter(e => e.date === dateStr);
+    }
+
+    function isToday(date) {
+        const today = new Date();
+        return date.getDate() === today.getDate() &&
+               date.getMonth() === today.getMonth() &&
+               date.getFullYear() === today.getFullYear();
+    }
+
+    // --- Rendering ---
     function renderCalendar() {
-        calendarGrid.innerHTML = '';
-        
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
         
-        currentMonthYear.textContent = new Date(year, month).toLocaleString('default', { month: 'long', year: 'numeric' });
+        monthYearDisplay.textContent = `${year}年 ${month + 1}月`;
         
-        const firstDayOfMonth = new Date(year, month, 1).getDay();
+        // Setup days
+        const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 (Sun) to 6 (Sat)
         const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const daysInPrevMonth = new Date(year, month, 0).getDate();
         
-        // Previous month days
-        for (let i = firstDayOfMonth - 1; i >= 0; i--) {
-            const day = daysInPrevMonth - i;
-            const dateStr = formatDate(year, month - 1, day);
-            createDayCell(day, dateStr, true);
+        calendarContainer.innerHTML = '';
+        
+        // Add empty cells for previous month padding
+        for (let i = 0; i < firstDayOfMonth; i++) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'date-item empty';
+            calendarContainer.appendChild(emptyEl);
         }
         
-        // Current month days
+        // Add days of the month
         for (let i = 1; i <= daysInMonth; i++) {
-            const dateStr = formatDate(year, month, i);
-            createDayCell(i, dateStr, false);
+            const date = new Date(year, month, i);
+            const dateStr = formatDateString(date);
+            const dayOfWeek = date.getDay();
+            
+            const dateEl = document.createElement('div');
+            dateEl.className = 'date-item';
+            if (isToday(date)) dateEl.classList.add('is-today');
+            if (selectedDates.has(dateStr)) dateEl.classList.add('is-selected');
+            if (getEventsForDate(dateStr).length > 0) dateEl.classList.add('has-event');
+            
+            // Add weekends and holidays coloring slightly
+            if (dayOfWeek === 0 || holidays[dateStr]) {
+                dateEl.style.color = '#fca5a5'; // Light red for Sunday and Holidays
+            } else if (dayOfWeek === 6) {
+                dateEl.style.color = '#93c5fd'; // Light blue for Saturday
+            }
+            
+            dateEl.innerHTML = `<span class="day-number">${i}</span>`;
+            
+            dateEl.addEventListener('click', () => toggleDateSelection(dateStr, dateEl));
+            
+            calendarContainer.appendChild(dateEl);
         }
         
-        // Next month days (fill the grid to 42 cells)
-        const totalCells = calendarGrid.children.length;
-        const remainingCells = 42 - totalCells;
-        for (let i = 1; i <= remainingCells; i++) {
-            const dateStr = formatDate(year, month + 1, i);
-            createDayCell(i, dateStr, true);
-        }
+        updateInputPanel();
     }
 
-    function createDayCell(day, dateStr, isOtherMonth) {
-        const cell = document.createElement('div');
-        cell.className = `day-cell ${isOtherMonth ? 'other-month' : ''}`;
-        cell.dataset.date = dateStr;
+    function renderEvents() {
+        eventListEl.innerHTML = '';
         
-        const todayStr = formatDate(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-        if (dateStr === todayStr) {
-            cell.classList.add('today');
-        }
+        const currentYear = currentDate.getFullYear();
+        const currentMonth = currentDate.getMonth();
 
-        const numberDiv = document.createElement('div');
-        numberDiv.className = 'day-number';
-        numberDiv.textContent = day;
-        cell.appendChild(numberDiv);
-
-        // Render events
-        if (events[dateStr]) {
-            events[dateStr].forEach((ev, idx) => {
-                const pill = document.createElement('div');
-                pill.className = 'event-pill';
-                
-                const textSpan = document.createElement('span');
-                textSpan.className = 'event-text';
-                textSpan.textContent = ev;
-                textSpan.title = ev;
-                
-                // 予定テキストクリックで詳細モーダル表示
-                textSpan.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    hidePopover();
-                    openModal(dateStr);
-                });
-
-                // バツボタンクリックで直接削除
-                const delBtn = document.createElement('button');
-                delBtn.className = 'pill-del-btn';
-                delBtn.innerHTML = '&times;';
-                delBtn.title = "削除";
-                delBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    events[dateStr].splice(idx, 1);
-                    if (events[dateStr].length === 0) delete events[dateStr];
-                    saveEvents();
-                    renderCalendar(); // 再描画
-                });
-
-                pill.appendChild(textSpan);
-                pill.appendChild(delBtn);
-                cell.appendChild(pill);
-            });
-        }
-
-        // Cell Click -> Toggle Selection & Show Quick Add
-        cell.addEventListener('click', (e) => {
-            if (e.target.closest('.event-pill')) return;
-
-            // 選択状態をトグル
-            if (selectedDates.has(dateStr)) {
-                selectedDates.delete(dateStr);
-                cell.classList.remove('selected');
-            } else {
-                selectedDates.add(dateStr);
-                cell.classList.add('selected');
-            }
-
-            // 1つ以上選択されていればポップアップを表示、0になれば隠す
-            if (selectedDates.size > 0) {
-                // クリックされたマスの位置にポップアップを表示
-                showPopover(cell);
-            } else {
-                hidePopover();
-            }
+        // Sort events chronologically and filter by current displayed month
+        const filteredEvents = events.filter(e => {
+            const d = new Date(e.date);
+            return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
         });
 
-        // 既に選択されている日付なら（月を切り替えて戻ってきた時用）
-        if (selectedDates.has(dateStr)) {
-            cell.classList.add('selected');
-        }
-
-        calendarGrid.appendChild(cell);
-    }
-
-    // 枠外クリックで選択を解除
-    document.addEventListener('click', (e) => {
-        // クリックした要素が、カレンダーのマスでもポップアップでもモーダルでもなければ解除
-        if (!e.target.closest('.day-cell') && 
-            !e.target.closest('.popover') && 
-            !e.target.closest('.calendar-header') &&
-            !e.target.closest('.modal-overlay')) {
-            hidePopover();
-        }
-    });
-
-    // --- Popover (Quick Add) ---
-    function showPopover(cellElement) {
-        if (cellElement) {
-            const rect = cellElement.getBoundingClientRect();
-            popover.style.left = `${rect.left + rect.width / 2}px`;
-            popover.style.top = `${rect.top}px`;
-        }
+        const sortedEvents = filteredEvents.sort((a, b) => a.date.localeCompare(b.date));
         
-        popover.classList.add('visible');
-        eventTitleInput.value = '';
-        eventTitleInput.focus();
-    }
-
-    function hidePopover() {
-        popover.classList.remove('visible');
-        document.querySelectorAll('.day-cell').forEach(c => c.classList.remove('selected'));
-        selectedDates.clear();
-    }
-
-    eventTitleInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && eventTitleInput.value.trim() !== '') {
-            addEventToSelection(eventTitleInput.value.trim());
-            hidePopover();
-        } else if (e.key === 'Escape') {
-            hidePopover();
-        }
-    });
-
-    function addEventToSelection(title) {
-        selectedDates.forEach(dateStr => {
-            if (!events[dateStr]) events[dateStr] = [];
-            events[dateStr].push(title);
-        });
-        saveEvents();
-        renderCalendar();
-    }
-
-    // --- Modal (Details) ---
-    let modalCurrentDate = null;
-
-    function openModal(dateStr) {
-        modalCurrentDate = dateStr;
-        modalDateTitle.textContent = dateStr;
-        renderModalEvents();
-        modalAddInput.value = '';
-        modal.classList.remove('hidden');
-        setTimeout(() => modalAddInput.focus(), 100);
-    }
-
-    function closeModal() {
-        modal.classList.add('hidden');
-        modalCurrentDate = null;
-    }
-
-    function renderModalEvents() {
-        modalEventsList.innerHTML = '';
-        const dayEvents = events[modalCurrentDate] || [];
-        
-        if (dayEvents.length === 0) {
-            modalEventsList.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.9rem;">予定はありません</div>';
+        if (sortedEvents.length === 0) {
+            eventListEl.innerHTML = '<li class="no-events">この月の予定はありません</li>';
             return;
         }
-
-        dayEvents.forEach((ev, idx) => {
-            const item = document.createElement('div');
-            item.className = 'modal-event-item';
+        
+        sortedEvents.forEach(event => {
+            const li = document.createElement('li');
+            li.className = 'event-item';
+            li.innerHTML = `
+                <div class="event-info">
+                    <span class="event-date">${getFormattedDateDisplay(event.date)}</span>
+                    <span class="event-text">${escapeHTML(event.text)}</span>
+                </div>
+                <button class="btn-delete" data-id="${event.id}" aria-label="削除">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            `;
             
-            const text = document.createElement('span');
-            text.textContent = ev;
-            
-            const delBtn = document.createElement('button');
-            delBtn.className = 'delete-btn';
-            delBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
-            delBtn.onclick = () => {
-                events[modalCurrentDate].splice(idx, 1);
-                if (events[modalCurrentDate].length === 0) delete events[modalCurrentDate];
-                saveEvents();
-                renderModalEvents();
-                renderCalendar();
-            };
-
-            item.appendChild(text);
-            item.appendChild(delBtn);
-            modalEventsList.appendChild(item);
+            li.querySelector('.btn-delete').addEventListener('click', () => deleteEvent(event.id));
+            eventListEl.appendChild(li);
         });
     }
 
-    modalAddInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && modalAddInput.value.trim() !== '') {
-            if (!events[modalCurrentDate]) events[modalCurrentDate] = [];
-            events[modalCurrentDate].push(modalAddInput.value.trim());
-            saveEvents();
-            renderModalEvents();
-            renderCalendar();
-            modalAddInput.value = '';
-        } else if (e.key === 'Escape') {
-            closeModal();
+    function escapeHTML(str) {
+        return str.replace(/[&<>'"]/g, 
+            tag => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[tag] || tag)
+        );
+    }
+
+    // --- Interaction ---
+    function toggleDateSelection(dateStr, element) {
+        if (selectedDates.has(dateStr)) {
+            selectedDates.delete(dateStr);
+            element.classList.remove('is-selected');
+        } else {
+            selectedDates.add(dateStr);
+            element.classList.add('is-selected');
         }
-    });
-
-    closeModalBtn.addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal();
-    });
-
-    // --- Helpers ---
-    function saveEvents() {
-        localStorage.setItem('calendar_events', JSON.stringify(events));
+        updateInputPanel();
     }
 
-    function formatDate(y, m, d) {
-        const date = new Date(y, m, d);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+    function updateInputPanel() {
+        if (selectedDates.size > 0) {
+            inputPanel.classList.remove('hidden');
+            
+            if (selectedDates.size === 1) {
+                const dateStr = Array.from(selectedDates)[0];
+                selectedDatesText.textContent = `${getFormattedDateDisplay(dateStr)} に追加`;
+            } else {
+                selectedDatesText.textContent = `${selectedDates.size}日間の予定を追加`;
+            }
+        } else {
+            inputPanel.classList.add('hidden');
+            eventInput.value = '';
+            eventInput.blur(); // dismiss keyboard
+        }
     }
 
-    // --- Navigation ---
-    prevMonthBtn.addEventListener('click', () => {
-        hidePopover();
-        currentDate.setMonth(currentDate.getMonth() - 1);
-        renderCalendar();
-    });
+    function cancelSelection() {
+        selectedDates.clear();
+        renderCalendar(); // re-render to clear 'is-selected' classes
+        updateInputPanel();
+    }
 
-    nextMonthBtn.addEventListener('click', () => {
-        hidePopover();
-        currentDate.setMonth(currentDate.getMonth() + 1);
-        renderCalendar();
-    });
+    function addEvent() {
+        const text = eventInput.value.trim();
+        if (!text || selectedDates.size === 0) return;
+        
+        selectedDates.forEach(dateStr => {
+            events.push({
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                date: dateStr,
+                text: text
+            });
+        });
+        
+        saveEvents();
+        cancelSelection(); // Also hides the panel and clears input
+        renderCalendar(); // To update the 'has-event' dots
+        renderEvents();
+    }
+
+    function deleteEvent(id) {
+        events = events.filter(e => e.id !== id);
+        saveEvents();
+        renderCalendar(); // Update dots
+        renderEvents();
+    }
+
+    // --- Event Listeners ---
+    function setupEventListeners() {
+        prevMonthBtn.addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() - 1);
+            renderCalendar();
+            renderEvents(); // Update event list for new month
+        });
+        
+        nextMonthBtn.addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+            renderCalendar();
+            renderEvents(); // Update event list for new month
+        });
+        
+        cancelSelectionBtn.addEventListener('click', cancelSelection);
+        
+        addEventBtn.addEventListener('click', addEvent);
+        
+        eventInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                addEvent();
+            }
+        });
+    }
+
+    // Run
+    init();
 });
